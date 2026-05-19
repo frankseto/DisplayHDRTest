@@ -207,6 +207,8 @@ void Game::ConstructorInternal()
 	m_currentBlack = 0;			// Which black level is crushed
 
 	m_checkerboard = Checkerboard::Cb6x4;
+	// checkerboard 3x3
+	m_checkerboard3x3SizeMM = 80.f;
 	m_snoodDiam = 40.f;							// OD of sensor snood in mm
 	m_LocalDimmingBars = 0;						// v1.2 Local Dimming Contrast test
 	m_subtitleVisible = 1;						// v1.4 subTitle Flicker Test
@@ -287,7 +289,7 @@ bool Game::CheckForDefaults()
 }
 
 // Default to tier based on what the EDID specified
-Game::TestingTier Game::GetTestingTier()
+Game::TestingTier Game::GetTestingTier() const
 {
 #define SAFETY (0.970)
          if (m_rawOutDesc.MaxLuminance >= SAFETY * 10000.0f)
@@ -533,7 +535,7 @@ void Game::Update(DX::StepTimer const& timer)
 			}
 		}
 	}
-
+	break;
 	case TestPattern::ActiveDimming: break;
 	case TestPattern::ActiveDimmingDark: break;
 
@@ -685,6 +687,9 @@ void Game::UpdateDxgiColorimetryInfo()
 	m_modeHeight = dims.Height;
 
 	m_monitorName = foundMonitor.DisplayName();
+
+	// get DPI from OS
+	m_dpi = { foundMonitor.RawDpiX(), foundMonitor.RawDpiY() };
 
 	m_connectionKind = foundMonitor.ConnectionKind();
 	m_physicalConnectorKind = foundMonitor.PhysicalConnector();
@@ -906,6 +911,32 @@ bool Game::CheckHDR_On()
 void Game::GenerateTestPattern_ConnectionProperties(ID2D1DeviceContext2* ctx)
 {
     if (m_newTestSelected) SetMetadataNeutral();
+	D2D1_RECT_F logSize = m_deviceResources->GetLogicalSize();
+	float2 screen = { (logSize.right - logSize.left), (logSize.bottom - logSize.top) };
+	float2 center = screen * 0.5f;
+
+
+	// Credit card size - ISO/IEC 7810 ID-1, is 85.60 mm × 53.98 mm (3.370 inches × 2.125 inches).
+	float2 card = mm2px(85.60f, 53.98f);
+	
+	struct Line2D {
+		float2 start;
+		float2 length;
+	};
+	Line2D lines[] = {
+	{ {center.x - card.x * 0.6f, center.y - card.y * 0.5f}, { card.x * 1.2f , 0.} },
+	{ {center.x - card.x * 0.6f, center.y + card.y * 0.5f}, { card.x * 1.2f , 0.} },
+	{ {center.x - card.x * 0.5f, center.y - card.y * 0.6f}, { 0., card.y * 1.2f} },
+	{ {center.x + card.x * 0.5f, center.y - card.y * 0.6f}, { 0., card.y * 1.2f} },
+	};
+	
+	for (const Line2D& entry : lines)
+	{
+		ctx->DrawLine(
+			D2D1::Point2F(entry.start.x, entry.start.y),
+			D2D1::Point2F(entry.start.x + entry.length.x, entry.start.y + entry.length.y),
+			m_redBrush.Get(), 2);
+	}
 
     std::wstringstream text;
 
@@ -1010,6 +1041,8 @@ void Game::GenerateTestPattern_ConnectionProperties(ID2D1DeviceContext2* ctx)
 	text << "\nResolution: " << m_modeWidth << " x " << m_modeHeight;
 	text << " x " << std::to_wstring(m_outputDesc.BitsPerColor) << L"bits @ ";
 	text << m_displayFrequency << L"Hz\n";
+
+	text << "\nDPI: " << std::fixed << std::setprecision(0) << m_dpi.x << "(w) x " << m_dpi.y << "(h)";
 
     bool HDR_On = CheckHDR_On();
 
@@ -2865,9 +2898,143 @@ void Game::DrawChecker4x3n(ID2D1DeviceContext2* ctx, float colorL, float colorR 
 
 }
 
+float Game::DrawChecker3x3(ID2D1DeviceContext2* ctx, float color1, float color2)
+{
+	ComPtr<ID2D1SolidColorBrush> Brush1;			// brush for the primary color
+	ComPtr<ID2D1SolidColorBrush> Brush2;			// brush for the secondary color
+	// draw the "white" boxes on the black background
+	D2D1_RECT_F logSize = m_deviceResources->GetLogicalSize();
+	float2 virt = { (logSize.right - logSize.left), (logSize.bottom - logSize.top) };
+	float2 center = virt * 0.5f;
+
+	//get a brush of the right white:
+	DX::ThrowIfFailed(ctx->CreateSolidColorBrush(D2D1::ColorF(color1, color1, color1), &Brush1));
+	DX::ThrowIfFailed(ctx->CreateSolidColorBrush(D2D1::ColorF(color2, color2, color2), &Brush2));
+
+	float2 centerSizePx = mm2px(m_checkerboard3x3SizeMM);
+
+	// virtual screen boundary 
+	float left_virt = 0;
+	float right_virt = virt.x;
+	float top_virt = 0;
+	float bottom_virt = virt.y;
+	// virtual area
+	float virtArea = virt.x * virt.y;
+
+	D2D1_RECT_F virtRect = { left_virt, top_virt,right_virt ,bottom_virt };
+
+	ctx->FillRectangle(&virtRect, Brush2.Get());
+	// sanity check
+	if ((centerSizePx.x > (virt.x - 10)) || (centerSizePx.y > (virt.y - 10)))
+	{
+		return std::nanf("");
+	}
+
+	float left_edge = left_virt + std::round((virt.x - centerSizePx.x) / 2);
+	float right_edge = left_edge + centerSizePx.x;
+	float top_edge = top_virt + std::round((virt.y - centerSizePx.y) / 2);
+	float bottom_edge = top_edge + centerSizePx.y;
+
+
+	// sanity check
+	left_edge = std::clamp(left_edge, left_virt, center.x);
+	right_edge = std::clamp(right_edge, center.x, right_virt);
+	top_edge = std::clamp(top_edge, top_virt, center.y);
+	bottom_edge = std::clamp(bottom_edge, center.y, bottom_virt);
+
+
+	float blkArea = centerSizePx.x * centerSizePx.y; // center patch
+	blkArea += 4 * (left_edge - left_virt) * (top_edge - top_virt); // corners
+
+
+	D2D1_RECT_F rect[] = {
+	{ left_edge, top_virt, right_edge, top_edge},
+	{ left_edge, bottom_edge, right_edge, bottom_virt },
+	};
+
+	for (const D2D1_RECT_F& r : rect) {
+		ctx->FillRectangle(&r, Brush1.Get());
+	}
+
+	// figure the remaining area
+	auto adj = ((virtArea / 2.f) - blkArea);
+	if (adj > 0)
+	{
+		// cut back the left/right side to reach 50%
+		adj = (adj / centerSizePx.y) / 2.f;
+		adj = std::round(adj);
+		left_virt += adj;
+		right_virt -= adj;
+		blkArea += 2.f * adj * centerSizePx.y;
+
+		D2D1_RECT_F rect2[] = {
+		{ left_virt, top_edge, left_edge, bottom_edge },
+		{ right_edge, top_edge, right_virt, bottom_edge },
+		};
+		for (const D2D1_RECT_F& r : rect2) {
+			ctx->FillRectangle(&r, Brush1.Get());
+		}
+	}
+	else
+	{
+		D2D1_RECT_F rect_s[] = {	//sides
+		{ left_virt, top_edge, left_edge, bottom_edge },
+		{ right_edge, top_edge, right_virt, bottom_edge },
+		};
+		for (const D2D1_RECT_F& r : rect_s) {
+			ctx->FillRectangle(&r, Brush1.Get());
+		}
+		// add to the four corners to reach 50%
+		adj = -adj / (top_edge - top_virt) / 4.f;
+		adj = std::round(adj);
+		left_edge = left_virt + adj;
+		right_edge = right_virt - adj;
+		blkArea -= 4.f * adj * (top_edge - top_virt);
+
+		D2D1_RECT_F rect_c[] = {	//corners
+		{ left_virt, top_virt, left_edge, top_edge },
+		{ left_virt, bottom_edge, left_edge, bottom_virt },
+		{ right_edge, top_virt, right_virt, top_edge },
+		{ right_edge, bottom_edge, right_virt, bottom_virt },
+		};
+		for (const D2D1_RECT_F& r : rect_c) {
+			ctx->FillRectangle(&r, Brush1.Get());
+		}
+	}
+	if (m_showExplanatoryText)
+	{
+		float2 fRad = mm2px(m_snoodDiam * 0.5f);      // radius of dia 27mm -> inches -> dips
+		D2D1_ELLIPSE ellipse;
+		ellipse =
+		{
+			D2D1::Point2F(center.x, center.y),
+			fRad.x, fRad.y
+		};
+		ctx->DrawEllipse(&ellipse, m_redBrush.Get(), 2.5f);
+
+		ctx->DrawLine(
+			D2D1::Point2F(center.x - centerSizePx.x / 2 * 0.8f, center.y),					// horizontal line
+			D2D1::Point2F(center.x + centerSizePx.x / 2 * 0.8f, center.y),
+			m_redBrush.Get(),
+			2
+		);
+		ctx->DrawLine(
+			D2D1::Point2F(center.x, center.y - centerSizePx.y / 2 * 0.8f),					//  vertical
+			D2D1::Point2F(center.x, center.y + centerSizePx.y / 2 * 0.8f),
+			m_redBrush.Get(),
+			2
+		);
+
+	}
+
+	return blkArea / virtArea;
+}
+
 void Game::GenerateTestPattern_StaticContrastRatio(ID2D1DeviceContext2 * ctx)       //**************** 5.
 {
 	float color, nits;
+	float fillpercent;
+
 	if (CheckHDR_On())
 	{
 		nits = Remove2084(m_staticContrastPQValue/1023.0f) * 10000.0f;
@@ -2894,6 +3061,15 @@ void Game::GenerateTestPattern_StaticContrastRatio(ID2D1DeviceContext2 * ctx)   
 
 	case Checkerboard::Cb4x3not:
 		DrawChecker4x3n(ctx, color);
+		break;
+
+	case Checkerboard::Cb3x3:
+		fillpercent = DrawChecker3x3(ctx, color, 0.f);
+		break;
+
+	case Checkerboard::Cb3x3not:
+		fillpercent = DrawChecker3x3(ctx, 0.f, color);
+		fillpercent = 1 - fillpercent;
 		break;
 	}
 
@@ -2922,6 +3098,25 @@ void Game::GenerateTestPattern_StaticContrastRatio(ID2D1DeviceContext2 * ctx)   
 
 		title << L" -adjust using up/down arrows\n";
 		title << L"Select checkerboard using LessThan < or GreaterThan > keys\n";
+
+		if ((m_checkerboard == Checkerboard::Cb3x3) || (m_checkerboard == Checkerboard::Cb3x3not))
+		{
+			D2D1_RECT_F logSize = m_deviceResources->GetLogicalSize();
+			float2 virt = { (logSize.right - logSize.left), (logSize.bottom - logSize.top) };
+			float2 virtmm = px2mm(virt);
+
+			float2 sizePx = mm2px(m_checkerboard3x3SizeMM);
+			float2 sizeMM = px2mm(sizePx);
+
+			title << L"\n Screen px / (mm): " << std::fixed << std::setprecision(0) << virt.x << " x " << virt.y << " / ( " <<
+					std::setprecision(2) << virtmm.x << " x " << virtmm.y << " )";
+			title << L"\n\nLoading: " << setprecision(2) << fillpercent * 100 << "%";
+
+			title << L"\nPatch width x height (mm): " << setprecision(2) << m_checkerboard3x3SizeMM << "mm\t(adjust using - / +)";
+			title << L"\n\tActual px / (mm): " << setprecision(0) << sizePx.x << " x " << sizePx.y << " / ( " <<
+				std::setprecision(2) << sizeMM.x << " x " << sizeMM.y << " )";
+		}
+
 		title << L"\n" << m_hideTextString;
 
 		RenderText(ctx, m_largeFormat.Get(), title.str(), m_testTitleRect );
@@ -2947,6 +3142,7 @@ void Game::GenerateTestPattern_ActiveDimming(ID2D1DeviceContext2 * ctx)	//******
 	float color = nitstoCCCS(nits)/BRIGHTNESS_SLIDER_FACTOR;
 	switch (m_checkerboard)
 	{
+	default:
 	case Checkerboard::Cb6x4:
 		DrawChecker6x4(ctx, color);
 		break;
@@ -3000,6 +3196,7 @@ void Game::GenerateTestPattern_ActiveDimmingDark(ID2D1DeviceContext2 * ctx) //**
 	float color = nitstoCCCS(nits)/BRIGHTNESS_SLIDER_FACTOR;
 	switch (m_checkerboard)
 	{
+	default:
 	case Checkerboard::Cb6x4:
 		DrawChecker6x4(ctx, color);
 		break;
@@ -3058,6 +3255,7 @@ void Game::GenerateTestPattern_ActiveDimmingSplit(ID2D1DeviceContext2 * ctx) //*
 	// draw the squares
 	switch (m_checkerboard)
 	{
+	default:
 	case Checkerboard::Cb6x4:
 		DrawChecker6x4(ctx, colorL, colorR);
 		break;
@@ -6161,41 +6359,29 @@ void Game::ChangeGradientColor(float deltaR, float deltaG, float deltaB)
 
 void Game:: ChangeCheckerboard( INT32 increment )
 {
-	if (m_currentTest == TestPattern::XRiteColors)
+	// should check if we're in the right test
+	switch (m_currentTest)
 	{
-		if (m_XRitePatchAutoMode)
-			return;									// ignore arrow keys if auto advancing
-		m_currentXRiteIndex += increment;
-		m_currentXRiteIndex = (int)wrap((float)m_currentXRiteIndex, 0.f, NUMXRITECOLORS);	// Just wrap on each end <inclusive!>
-
-		return;
-	}
-
-	if (increment < 0)
-	{
-		if (Checkerboard::Cb4x3not == m_checkerboard )
+		case TestPattern::XRiteColors:
 		{
-			// Wrap to the start of the list.
-			m_checkerboard = Checkerboard::Cb6x4;
+			if (m_XRitePatchAutoMode)
+				return;									// ignore arrow keys if auto advancing
+			m_currentXRiteIndex += increment;
+			m_currentXRiteIndex = (int)wrap((float)m_currentXRiteIndex, 0.f, NUMXRITECOLORS);	// Just wrap on each end <inclusive!>
 		}
-		else
+		break;
+		case TestPattern::StaticContrastRatio:		// 5. was tunnel
+		case TestPattern::ActiveDimming:			// 5.1
+		case TestPattern::ActiveDimmingDark:		// 5.2
+		case TestPattern::ActiveDimmingSplit:		// 5.3
 		{
-			unsigned int checkInt = static_cast<unsigned int>(m_checkerboard) + 1;
-			m_checkerboard = static_cast<Checkerboard>(checkInt);
+			float value = static_cast<float>(m_checkerboard);
+			float inc = (increment < 0) ? 1.f : -1.f;
+			value = wrap(value + inc, 0, static_cast<float>(Checkerboard::_CbEnd_) - 1.f);
+			
+			m_checkerboard = static_cast<Checkerboard>(value);
 		}
-	}
-	else // (increment > 0)
-	{
-		if (Checkerboard::Cb6x4 == m_checkerboard)
-		{
-			// Wrap to the end of the list.
-			m_checkerboard = Checkerboard::Cb4x3not;
-		}
-		else
-		{
-			unsigned int checkInt = static_cast<unsigned int>(m_checkerboard) - 1;
-			m_checkerboard = static_cast<Checkerboard>(checkInt);
-		}
+		break;
 	}
 }
 
@@ -6254,6 +6440,12 @@ void Game::ChangeXRitePatchDisplayTime(INT32 increment)
 	if (m_currentTest == TestPattern::XRiteColors)
 	{
 		m_XRitePatchDisplayTime += increment * 0.1f;
+		return;
+	}
+	if (m_currentTest == TestPattern::StaticContrastRatio)
+	{
+		m_checkerboard3x3SizeMM += increment * 0.1f;
+		m_checkerboard3x3SizeMM = clamp(m_checkerboard3x3SizeMM, 75.f, 85.f);
 		return;
 	}
 }

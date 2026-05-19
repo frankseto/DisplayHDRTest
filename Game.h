@@ -85,6 +85,9 @@ public:
         Cb6x4,
         Cb4x3,
         Cb4x3not,
+        Cb3x3,
+        Cb3x3not,
+        _CbEnd_ // last entry
     };
 
 	enum class TestPattern
@@ -195,7 +198,9 @@ private:
     void DrawChecker6x4(  ID2D1DeviceContext2* ctx, float colorL, float colorR );      // for displays > 20"
     void DrawChecker4x3(  ID2D1DeviceContext2* ctx, float colorL, float colorR );      // for smaller panels
     void DrawChecker4x3n( ID2D1DeviceContext2* ctx, float colorL, float colorR );      // nverse of above
-    TestingTier GetTestingTier();
+    float DrawChecker3x3(  ID2D1DeviceContext2* ctx, float colorL, float colorR);      // for smaller panels
+
+    TestingTier GetTestingTier() const;
     WCHAR *GetTierName(TestingTier tier);
 	float GetTierLuminance(Game::TestingTier tier);
 
@@ -335,6 +340,8 @@ private:
 	float													m_activeDimming05PQValue;
     float													m_activeDimming50sRGBValue;         // probably no active dimming in sRGB mode
     float													m_activeDimming05sRGBValue;         // only in HDR mode
+    float                                                   m_checkerboard3x3SizeMM;            // size of center 3x3 checkerboard in mm
+    float2                                                  m_dpi;  // DPI from OS
 
 	bool                                                    m_newTestSelected; // Used for one-time initialization of test variables.
     bool                                                    m_dxgiColorInfoStale;
@@ -351,4 +358,29 @@ private:
     float                                   m_totalTime;
 
     PWSTR                                   m_appTitle;
+    
+    /// <summary>
+    /// helper function to convert units in millimeter to pixel, given RawDPI returned by OS
+    /// </summary>
+    /// <param name="mm_x">width</param>
+    /// <param name="mm_y">height</param>
+    /// <returns>pixel</returns>
+    inline float2 mm2px(float mm_x, float mm_y) const
+    {
+        float2 px = { mm_x, mm_y };
+        float2 mm = px * m_dpi / 25.4f;
+        return { std::round(mm.x), std::round(mm.y) };
+    }
+
+    inline float2 mm2px(float mm)
+    {
+        return mm2px(mm, mm);
+    }
+
+    inline float2 px2mm(float2 px)
+    {
+        float2 v = { px.x / m_dpi.x, px.y / m_dpi.y };
+        return v * 25.4f;
+    }
+
 };
