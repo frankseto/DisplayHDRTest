@@ -4315,10 +4315,17 @@ void Game::GenerateTestPattern_ProfileCurve(ID2D1DeviceContext2 * ctx)  //******
 
 	// "tone map" PQ limit of 10k nits down to panel maxLuminance in CCCS
 	float patchPct = PATCHPCT;							// patch percentage of screen area
+
+	// https://groups.vesa.org/wg/DPM/documentComment/7326?view=all
+	// the Metadata should be set to MaxLuminance to test the tonemap ability of display
+	// Metadata is set earlier in this code, and this introduce an issue where metadata will be updated 
+	// if user jump to another test and jump back.
+#if 0
 	float avg = nits * patchPct + TARGETAPL/(1.f - patchPct)*80.f;
 	if (m_newTestSelected) {
 		SetMetadata(nits, avg, GAMUT_Native);
 	}
+#endif
 
 	auto logSize = m_deviceResources->GetLogicalSize();
 	std::wstringstream title;
