@@ -30,9 +30,30 @@
 *.vcxproj.user
 # VS folders of binaries
 /x64/
+/Win32/
+/ARM64/
+/Debug/
+/Release/
+/DisplayH.*/
+# VS / MSVC intermediate build objects
+ipch/
+*.obj
+*.pch
+*.pdb
+*.idb
+*.ilk
+*.iobj
+*.ipdb
+*.exp
+*.tlog
+*.lastbuildstate
+*.recipe
+*.log
+*.aps
+*.VC.db
+*.VC.opendb
 .gitusers
 
-/ToneSpikeEffect.cso
-/SineSweepEffect.cso
-/BandedGradientEffect.cso
-/BackgroundNoiseEffect.cso
+# compiled shaders (FxCompile output; the post-build step also copies them to the project dir)
+*.cso
+*.fxlib

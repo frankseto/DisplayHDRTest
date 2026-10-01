@@ -1,4 +1,4 @@
-//********************************************************* 
+ï»¿//********************************************************* 
 // 
 // Copyright (c) Microsoft. All rights reserved. 
 // This code is licensed under the MIT License (MIT). 
@@ -38,7 +38,7 @@ struct XriteColors		// provided courtesy of Portrait X-Rite(TM) calibration tech
 	char col;
 	UINT32 RGB;
 	float  R, G, B;		// for 100 nit D65 white point in 2020 gamut primaries
-	double X, Y, Z;		// (CIE 1931 2ø)
+	double X, Y, Z;		// (CIE 1931 2Â°)
 } XRite[] = {
 //n row col    RRGGBB      R          G           B         X             Y             Z
 //0, 0, '-', 0xFFFFFF,  1.000000, 1.000000, 1.000000, 100.000000000,100.000000000,100.000000000,
@@ -871,8 +871,8 @@ void Game::GenerateTestPattern_StartOfTest(ID2D1DeviceContext2* ctx)
     text << L"ALT-ENTER:	Toggle fullscreen\n";
     text << L"ESCAPE:		Exit fullscreen\n";
     text << L"ALT-F4:		Exit app\n";
-    text << L"\nCopyright © VESA\nLast updated: " << __DATE__;
-    text << L"\nIncludes Portrait X-Rite™ color technology\n";
+    text << L"\nCopyright Â© VESA\nLast updated: " << __DATE__;
+    text << L"\nIncludes Portrait X-Riteâ„¢ color technology\n";
 
     RenderText(ctx, m_largeFormat.Get(), text.str(), m_largeTextRect);
 
@@ -916,7 +916,7 @@ void Game::GenerateTestPattern_ConnectionProperties(ID2D1DeviceContext2* ctx)
 	float2 center = screen * 0.5f;
 
 
-	// Credit card size - ISO/IEC 7810 ID-1, is 85.60 mm × 53.98 mm (3.370 inches × 2.125 inches).
+	// Credit card size - ISO/IEC 7810 ID-1, is 85.60 mm Ã— 53.98 mm (3.370 inches Ã— 2.125 inches).
 	float2 card = mm2px(85.60f, 53.98f);
 	
 	struct Line2D {
@@ -5172,7 +5172,7 @@ void Game::GenerateTestPattern_XRiteColors(ID2D1DeviceContext2* ctx)						// v1.
 
 		title << fixed << setprecision(0);
 
-		title << L"1.2.5 X-Rite™ Colors\n";
+		title << L"1.2.5 X-Riteâ„¢ Colors\n";
 		title << L"Color#: ";
 		title << setw(3) << XRite[m_currentXRiteIndex].num;
 		title << L"   RxC: ";
