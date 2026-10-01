@@ -402,6 +402,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 //          game->ChangeGradientColor(-0.05f, -0.05f, -0.05f);
             break;
 
+        case 0x52: // 'r'
+            game->ResetDpiAdjust();         // only on Connection Properties screen
+            break;
+
         case VK_PAUSE:
         case 0x50: // 'p'
             game->PauseAnimation();

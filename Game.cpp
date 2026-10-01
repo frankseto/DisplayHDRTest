@@ -31,6 +31,15 @@
 #define PATCHPCT (0.08f)
 #define TARGETAPL (0.02f)
 #define NUMXRITECOLORS (97.f)
+#define MAX_DPI_ADJUST (0.10f)		// max user DPI correction on screen 0, as fraction of OS RawDpi
+#define CARD_WIDTH_MM (85.60f)		// credit card size - ISO/IEC 7810 ID-1
+#define CARD_HEIGHT_MM (53.98f)
+
+// mm to whole pixels, rounded up (ignoring float noise) - for the credit card lines on screen 0
+static float mm2pxCeil(float mm, float dpi)
+{
+	return std::ceil(mm * dpi / 25.4f - 0.001f);
+}
 struct XriteColors		// provided courtesy of Portrait X-Rite(TM) calibration technology
 {
 	int num;
@@ -209,6 +218,7 @@ void Game::ConstructorInternal()
 	m_checkerboard = Checkerboard::Cb6x4;
 	// checkerboard 3x3
 	m_checkerboard3x3SizeMM = 80.f;
+	m_dpiAdjust = { 0.f, 0.f };					// user correction to OS DPI (screen 0)
 	m_snoodDiam = 40.f;							// OD of sensor snood in mm
 	m_LocalDimmingBars = 0;						// v1.2 Local Dimming Contrast test
 	m_subtitleVisible = 1;						// v1.4 subTitle Flicker Test
@@ -688,8 +698,21 @@ void Game::UpdateDxgiColorimetryInfo()
 
 	m_monitorName = foundMonitor.DisplayName();
 
-	// get DPI from OS
-	m_dpi = { foundMonitor.RawDpiX(), foundMonitor.RawDpiY() };
+	// get DPI from OS, keep any user adjustment unless we moved to a different monitor
+	if (foundMonitor.DeviceId() != m_monitorDeviceId)
+	{
+		m_monitorDeviceId = foundMonitor.DeviceId();
+		m_dpiAdjust = { 0.f, 0.f };
+	}
+	m_osDpi = { foundMonitor.RawDpiX(), foundMonitor.RawDpiY() };
+	m_dpi = m_osDpi + m_dpiAdjust;
+
+	// physical size as reported by the OS (null if the display didn't provide one)
+	auto physSize = foundMonitor.PhysicalSizeInInches();
+	if (physSize)
+		m_osPhysicalSizeIn = { physSize.Value().Width, physSize.Value().Height };
+	else
+		m_osPhysicalSizeIn = { 0.f, 0.f };
 
 	m_connectionKind = foundMonitor.ConnectionKind();
 	m_physicalConnectorKind = foundMonitor.PhysicalConnector();
@@ -917,25 +940,38 @@ void Game::GenerateTestPattern_ConnectionProperties(ID2D1DeviceContext2* ctx)
 
 
 	// Credit card size - ISO/IEC 7810 ID-1, is 85.60 mm × 53.98 mm (3.370 inches × 2.125 inches).
-	float2 card = mm2px(85.60f, 53.98f);
-	
+	// All red line positions are whole pixels. The card size is rounded up to the next pixel, and the
+	// upper-left corner is anchored to where it sits at the OS DPI, so a user DPI adjustment only
+	// moves the right and bottom edges. The strokes sit just outside the card edges, so the inner
+	// edges of the red lines are card size apart and stay visible around a card laid inside.
+	float2 cardOs = { mm2pxCeil(CARD_WIDTH_MM, m_osDpi.x), mm2pxCeil(CARD_HEIGHT_MM, m_osDpi.y) };	// at OS DPI
+	float2 card = { mm2pxCeil(CARD_WIDTH_MM, m_dpi.x), mm2pxCeil(CARD_HEIGHT_MM, m_dpi.y) };		// at adjusted DPI
+	float2 over = { std::ceil(cardOs.x * 0.1f), std::ceil(cardOs.y * 0.1f) };		// lines run 10% past each corner
+
+	const float lineWidth = 2.f;
+	float off = lineWidth * 0.5f;		// D2D centers the stroke on the line
+	float left = std::floor(center.x - cardOs.x * 0.5f);
+	float top = std::floor(center.y - cardOs.y * 0.5f);
+	float right = left + card.x;
+	float bottom = top + card.y;
+
 	struct Line2D {
 		float2 start;
 		float2 length;
 	};
 	Line2D lines[] = {
-	{ {center.x - card.x * 0.6f, center.y - card.y * 0.5f}, { card.x * 1.2f , 0.} },
-	{ {center.x - card.x * 0.6f, center.y + card.y * 0.5f}, { card.x * 1.2f , 0.} },
-	{ {center.x - card.x * 0.5f, center.y - card.y * 0.6f}, { 0., card.y * 1.2f} },
-	{ {center.x + card.x * 0.5f, center.y - card.y * 0.6f}, { 0., card.y * 1.2f} },
+	{ {left - over.x, top - off},    { card.x + over.x * 2.f, 0.} },
+	{ {left - over.x, bottom + off}, { card.x + over.x * 2.f, 0.} },
+	{ {left - off,  top - over.y},   { 0., card.y + over.y * 2.f} },
+	{ {right + off, top - over.y},   { 0., card.y + over.y * 2.f} },
 	};
-	
+
 	for (const Line2D& entry : lines)
 	{
 		ctx->DrawLine(
 			D2D1::Point2F(entry.start.x, entry.start.y),
 			D2D1::Point2F(entry.start.x + entry.length.x, entry.start.y + entry.length.y),
-			m_redBrush.Get(), 2);
+			m_redBrush.Get(), lineWidth);
 	}
 
     std::wstringstream text;
@@ -1042,7 +1078,30 @@ void Game::GenerateTestPattern_ConnectionProperties(ID2D1DeviceContext2* ctx)
 	text << " x " << std::to_wstring(m_outputDesc.BitsPerColor) << L"bits @ ";
 	text << m_displayFrequency << L"Hz\n";
 
-	text << "\nDPI: " << std::fixed << std::setprecision(0) << m_dpi.x << "(w) x " << m_dpi.y << "(h)";
+	// what the OS reports, and the physical size implied by the (user adjusted) DPI in use
+	float2 nativePx = { static_cast<float>(m_modeWidth), static_cast<float>(m_modeHeight) };
+	float2 adjIn = { nativePx.x / m_dpi.x, nativePx.y / m_dpi.y };
+	auto diag = [](float2 v) { return sqrtf(v.x * v.x + v.y * v.y); };
+
+	text << std::fixed << std::setprecision(1);
+	text << "\nReported by OS:";
+	text << "\n  Native resolution: " << m_modeWidth << " x " << m_modeHeight << " px";
+	text << "\n  RawDpi:            " << m_osDpi.x << "(w) x " << m_osDpi.y << "(h)";
+	if (m_osPhysicalSizeIn.x > 0.f && m_osPhysicalSizeIn.y > 0.f)
+		text << "\n  PhysicalSize:      " << std::setprecision(2) << m_osPhysicalSizeIn.x << " x " << m_osPhysicalSizeIn.y << " in ("
+			<< std::setprecision(1) << m_osPhysicalSizeIn.x * 25.4f << " x " << m_osPhysicalSizeIn.y * 25.4f << " mm), "
+			<< diag(m_osPhysicalSizeIn) << " in diag";
+	else
+		text << "\n  PhysicalSize:      not reported";
+
+	text << "\nAdjusted (" << std::showpos << m_dpiAdjust.x << " x " << m_dpiAdjust.y << std::noshowpos << " DPI):";
+	text << "\n  DPI:               " << m_dpi.x << "(w) x " << m_dpi.y << "(h)";
+	text << "\n  Physical size:     " << std::setprecision(2) << adjIn.x << " x " << adjIn.y << " in ("
+		<< std::setprecision(1) << adjIn.x * 25.4f << " x " << adjIn.y * 25.4f << " mm), "
+		<< diag(adjIn) << " in diag";
+
+	text << "\n\nAdjust so red lines match an 85.60 x 53.98 mm card:"
+		<< "\n  ,/. width  -/+ height  (1 px step, SHIFT 0.1 DPI)  R reset";
 
     bool HDR_On = CheckHDR_On();
 
@@ -3003,7 +3062,7 @@ float Game::DrawChecker3x3(ID2D1DeviceContext2* ctx, float color1, float color2)
 	}
 	if (m_showExplanatoryText)
 	{
-		float2 fRad = mm2px(m_snoodDiam * 0.5f);      // radius of dia 27mm -> inches -> dips
+		float2 fRad = mm2px(27.0f * 0.5f);      // radius of dia 27mm -> inches -> dips
 		D2D1_ELLIPSE ellipse;
 		ellipse =
 		{
@@ -3013,14 +3072,14 @@ float Game::DrawChecker3x3(ID2D1DeviceContext2* ctx, float color1, float color2)
 		ctx->DrawEllipse(&ellipse, m_redBrush.Get(), 2.5f);
 
 		ctx->DrawLine(
-			D2D1::Point2F(center.x - centerSizePx.x / 2 * 0.8f, center.y),					// horizontal line
-			D2D1::Point2F(center.x + centerSizePx.x / 2 * 0.8f, center.y),
+			D2D1::Point2F(center.x - centerSizePx.x / 2 , center.y),					// horizontal line
+			D2D1::Point2F(center.x + centerSizePx.x / 2 , center.y),
 			m_redBrush.Get(),
 			2
 		);
 		ctx->DrawLine(
-			D2D1::Point2F(center.x, center.y - centerSizePx.y / 2 * 0.8f),					//  vertical
-			D2D1::Point2F(center.x, center.y + centerSizePx.y / 2 * 0.8f),
+			D2D1::Point2F(center.x, center.y - centerSizePx.y / 2 ),					//  vertical
+			D2D1::Point2F(center.x, center.y + centerSizePx.y / 2 ),
 			m_redBrush.Get(),
 			2
 		);
@@ -6369,6 +6428,9 @@ void Game:: ChangeCheckerboard( INT32 increment )
 	// should check if we're in the right test
 	switch (m_currentTest)
 	{
+		case TestPattern::ConnectionProperties:		// 0. ,/. adjust horizontal DPI
+			AdjustDpi(increment, 0);
+			break;
 		case TestPattern::XRiteColors:
 		{
 			if (m_XRitePatchAutoMode)
@@ -6390,6 +6452,38 @@ void Game:: ChangeCheckerboard( INT32 increment )
 		}
 		break;
 	}
+}
+
+// Correct the OS-reported DPI per axis so physical sizes (80mm patch etc.) come out right.
+// Each step grows/shrinks the credit card lines by 1 px, with the DPI set so the card is exactly
+// that many px; SHIFT is a fine 0.1 DPI step. Kept until the app moves to a different monitor.
+void Game::AdjustDpi(INT32 incX, INT32 incY)
+{
+	if (m_shiftKey)
+	{
+		m_dpiAdjust.x += incX * 0.1f;
+		m_dpiAdjust.y += incY * 0.1f;
+	}
+	else
+	{
+		if (incX)
+			m_dpiAdjust.x = (mm2pxCeil(CARD_WIDTH_MM, m_dpi.x) + incX) * 25.4f / CARD_WIDTH_MM - m_osDpi.x;
+		if (incY)
+			m_dpiAdjust.y = (mm2pxCeil(CARD_HEIGHT_MM, m_dpi.y) + incY) * 25.4f / CARD_HEIGHT_MM - m_osDpi.y;
+	}
+
+	// don't let it go more than +/-MAX_DPI_ADJUST from what the OS reported
+	m_dpiAdjust.x = clamp(m_dpiAdjust.x, -MAX_DPI_ADJUST * m_osDpi.x, MAX_DPI_ADJUST * m_osDpi.x);
+	m_dpiAdjust.y = clamp(m_dpiAdjust.y, -MAX_DPI_ADJUST * m_osDpi.y, MAX_DPI_ADJUST * m_osDpi.y);
+	m_dpi = m_osDpi + m_dpiAdjust;
+}
+
+void Game::ResetDpiAdjust(void)
+{
+	if (m_currentTest != TestPattern::ConnectionProperties)
+		return;
+	m_dpiAdjust = { 0.f, 0.f };
+	m_dpi = m_osDpi;
 }
 
 void Game::StartTestPattern(void)
@@ -6441,6 +6535,12 @@ void Game::ToggleXRitePatchAuto( void )
 // used to manually correct for monitor not being exactly PQ/2084 profile
 void Game::ChangeXRitePatchDisplayTime(INT32 increment)
 {
+	if (m_currentTest == TestPattern::ConnectionProperties)		// -/+ adjust vertical DPI
+	{
+		AdjustDpi(0, increment);
+		return;
+	}
+
 	if (m_shiftKey)
 		increment *= 10;
 

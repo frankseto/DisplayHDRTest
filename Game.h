@@ -176,6 +176,8 @@ public:
     void ChangeGradientColor(float deltaR, float deltaG, float deltaB);
     void ChangeBackBufferFormat(DXGI_FORMAT fmt);
     void ChangeCheckerboard( INT32 increment);
+    void AdjustDpi( INT32 incX, INT32 incY );
+    void ResetDpiAdjust( void );
     bool PauseAnimation();
     bool ToggleSubtitle();
     bool ToggleInfoTextVisible();
@@ -341,7 +343,11 @@ private:
     float													m_activeDimming50sRGBValue;         // probably no active dimming in sRGB mode
     float													m_activeDimming05sRGBValue;         // only in HDR mode
     float                                                   m_checkerboard3x3SizeMM;            // size of center 3x3 checkerboard in mm
-    float2                                                  m_dpi;  // DPI from OS
+    float2                                                  m_dpi;          // DPI in use = m_osDpi + m_dpiAdjust
+    float2                                                  m_osDpi;        // RawDpi from OS
+    float2                                                  m_dpiAdjust;    // user correction (screen 0)
+    winrt::hstring                                          m_monitorDeviceId;  // to reset m_dpiAdjust on monitor change
+    float2                                                  m_osPhysicalSizeIn; // PhysicalSizeInInches from OS (0 if not reported)
 
 	bool                                                    m_newTestSelected; // Used for one-time initialization of test variables.
     bool                                                    m_dxgiColorInfoStale;
